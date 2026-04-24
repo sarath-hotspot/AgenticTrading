@@ -1,0 +1,25 @@
+# AgenticTrading Engine Configuration
+# Edit these values to tune engine behaviour without touching source code.
+
+# Claude model used by all agents (hypothesis, experiment, reviewer)
+model: claude-haiku-4-5
+
+# Backtest date window written into every QC algorithm
+backtest_start_date: "2021-01-01"
+backtest_end_date: "2024-06-30"
+
+# Control loop: total number of hypothesis/experiment cycles to run
+max_iterations: 10
+
+# Research goal: minimum out-of-sample prediction accuracy (%) to declare success
+goal_accuracy_threshold: 70.0
+
+# Experiment agent: max compile/runtime error fix attempts before giving up on a run
+max_fix_attempts: 10
+
+# Control loop: max hypothesis regeneration attempts per iteration before skipping
+max_hypothesis_attempts: 10
+
+# Signal constraints enforced in hypothesis generation and reviewer gate prompts
+min_signals_per_year: 15
+max_signal_conditions: 2
