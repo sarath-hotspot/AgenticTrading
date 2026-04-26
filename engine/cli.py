@@ -12,13 +12,13 @@ if sys.platform == "win32" and hasattr(sys.stdout, "buffer"):
     sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace", newline="")
 
 import click
-import anthropic
 from dotenv import load_dotenv
 from rich.console import Console
 from rich.table import Table
 from rich import box
 
 from engine.config_loader import ConfigLoader
+from engine.llm_client import AnthropicLLMClient, OpenAILLMClient
 from engine.tools.quantconnect import QuantConnectClient
 from engine.tools import storage
 from engine.agents.hypothesis_agent import HypothesisAgent
@@ -58,32 +58,37 @@ def _check_config(config_loader: ConfigLoader) -> None:
         sys.exit(1)
 
 
-def _create_anthropic_client() -> anthropic.Anthropic:
-    """
-    Resolves credentials in priority order:
-      1. ANTHROPIC_API_KEY env var
-      2. primaryApiKey stored by Claude Code SSO login (~/.claude/config.json)
-    """
-    api_key = os.getenv("ANTHROPIC_API_KEY")
-
-    if not api_key:
-        config_path = Path.home() / ".claude" / "config.json"
-        if config_path.exists():
-            try:
-                with open(config_path) as f:
-                    claude_cfg = json.load(f)
-                api_key = claude_cfg.get("primaryApiKey")
-            except Exception:
-                pass
-
-    if not api_key:
-        console.print(
-            "[red]No Anthropic API key found.[/red] "
-            "Set ANTHROPIC_API_KEY or log in via Claude Code."
-        )
-        sys.exit(1)
-
-    return anthropic.Anthropic(api_key=api_key)
+def _create_llm_client(provider: str, engine_config: dict):
+    """Create the appropriate LLM client based on the selected provider."""
+    if provider == "openai":
+        import openai
+        api_key = os.getenv("OPENAI_API_KEY")
+        if not api_key:
+            console.print("[red]No OpenAI API key found.[/red] Set OPENAI_API_KEY in your .env file.")
+            sys.exit(1)
+        model = engine_config.get("openai_model", "gpt-4o")
+        console.print(f"[dim]Provider: OpenAI  model: {model}[/dim]")
+        return OpenAILLMClient(openai.OpenAI(api_key=api_key), model)
+    else:
+        import anthropic
+        api_key = os.getenv("ANTHROPIC_API_KEY")
+        if not api_key:
+            config_path = Path.home() / ".claude" / "config.json"
+            if config_path.exists():
+                try:
+                    with open(config_path) as f:
+                        api_key = json.load(f).get("primaryApiKey")
+                except Exception:
+                    pass
+        if not api_key:
+            console.print(
+                "[red]No Anthropic API key found.[/red] "
+                "Set ANTHROPIC_API_KEY or log in via Claude Code."
+            )
+            sys.exit(1)
+        model = engine_config.get("model", "claude-haiku-4-5")
+        console.print(f"[dim]Provider: Anthropic  model: {model}[/dim]")
+        return AnthropicLLMClient(anthropic.Anthropic(api_key=api_key), model)
 
 
 @click.group()
@@ -101,7 +106,9 @@ def cli():
               help="Resume the last interrupted run from its checkpoint.")
 @click.option("--pause-on-error", is_flag=True, default=False,
               help="Pause after each QC runtime error so you can verify it in the QC dashboard.")
-def run(max_iterations: int | None, auto: bool, resume: bool, pause_on_error: bool) -> None:
+@click.option("--provider", default="anthropic", type=click.Choice(["anthropic", "openai"]),
+              show_default=True, help="LLM provider to use.")
+def run(max_iterations: int | None, auto: bool, resume: bool, pause_on_error: bool, provider: str) -> None:
     """Start the agentic research loop."""
     _check_env()
 
@@ -129,7 +136,7 @@ def run(max_iterations: int | None, auto: bool, resume: bool, pause_on_error: bo
     log_run_id = run_id or datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     run_logger.setup(log_run_id)
 
-    client = _create_anthropic_client()
+    client = _create_llm_client(provider, engine_config)
     qc_client = QuantConnectClient(
         user_id=os.environ["QC_USER_ID"],
         api_token=os.environ["QC_API_TOKEN"],
@@ -183,6 +190,55 @@ def status() -> None:
         )
 
     console.print(table)
+
+
+@cli.command()
+@click.option("--force", is_flag=True, default=False,
+              help="Skip confirmation prompt.")
+@click.option("--keep-logs", is_flag=True, default=False,
+              help="Keep run log files in logs/.")
+def clear(force: bool, keep_logs: bool) -> None:
+    """Remove all experiments, agent memory, and the resume checkpoint."""
+    experiments_dir = Path("experiments")
+    memory_dir = Path("memory")
+    checkpoint = Path(".engine_run_state.json")
+    logs_dir = Path("logs")
+
+    # Collect what will be deleted so we can show a preview
+    to_delete: list[Path] = []
+
+    if experiments_dir.exists():
+        to_delete.extend(p for p in sorted(experiments_dir.iterdir()) if p.name != ".gitkeep")
+    if memory_dir.exists():
+        to_delete.extend(
+            p for p in sorted(memory_dir.iterdir())
+            if p.suffix == ".md" and p.name != ".gitkeep"
+        )
+    if checkpoint.exists():
+        to_delete.append(checkpoint)
+    if not keep_logs and logs_dir.exists():
+        to_delete.extend(sorted(logs_dir.iterdir()))
+
+    if not to_delete:
+        console.print("[dim]Nothing to clear.[/dim]")
+        return
+
+    console.print("[bold]The following files will be deleted:[/bold]")
+    for p in to_delete:
+        console.print(f"  [dim]{p}[/dim]")
+
+    if not force:
+        click.confirm("\nProceed?", abort=True)
+
+    deleted = 0
+    for p in to_delete:
+        try:
+            p.unlink()
+            deleted += 1
+        except Exception as exc:
+            console.print(f"[red]Could not delete {p}:[/red] {exc}")
+
+    console.print(f"[green]Cleared {deleted} file(s).[/green]")
 
 
 @cli.command()

@@ -4,6 +4,7 @@ import yaml
 
 ENGINE_DEFAULTS = {
     "model": "claude-haiku-4-5",
+    "openai_model": "gpt-4o",
     "backtest_start_date": "2021-01-01",
     "backtest_end_date": "2024-06-30",
     "max_iterations": 10,

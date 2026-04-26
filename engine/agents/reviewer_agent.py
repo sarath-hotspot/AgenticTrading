@@ -1,8 +1,7 @@
 import json
 import logging
-import time
+import re
 
-import anthropic
 from rich.console import Console
 
 logger = logging.getLogger(__name__)
@@ -47,10 +46,9 @@ console = Console()
 
 
 class ReviewerAgent:
-    def __init__(self, client: anthropic.Anthropic, engine_config: dict | None = None):
+    def __init__(self, client, engine_config: dict | None = None):
         engine = engine_config or {}
-        self.client = client
-        self.model = engine.get("model", "claude-haiku-4-5")
+        self.client = client  # AnthropicLLMClient or OpenAILLMClient
         self.system_prompt = SYSTEM_PROMPT_TEMPLATE.format(
             min_signals=engine.get("min_signals_per_year", 15),
             max_conditions=engine.get("max_signal_conditions", 2),
@@ -64,35 +62,16 @@ class ReviewerAgent:
             rationale=hypothesis.get("rationale", ""),
             approach=hypothesis.get("suggested_algorithm_approach", "")[:800],
         )
-        messages = [{"role": "user", "content": user_msg}]
-
-        for attempt in range(5):
-            try:
-                response = self.client.messages.create(
-                    model=self.model,
-                    max_tokens=512,
-                    system=self.system_prompt,
-                    messages=messages,
-                )
-                break
-            except anthropic.RateLimitError:
-                wait = 60 * (attempt + 1)
-                console.print(f"[yellow]Reviewer rate limit - waiting {wait}s...[/yellow]")
-                time.sleep(wait)
-        else:
-            logger.warning("Reviewer: all rate limit retries exhausted, defaulting to approve")
-            return "approve"
-
-        raw = ""
-        for block in response.content:
-            if hasattr(block, "text"):
-                raw = block.text.strip()
-                break
 
         try:
-            parsed = json.loads(raw)
+            raw = self.client.complete(system=self.system_prompt, user=user_msg, max_tokens=512)
+        except Exception:
+            logger.warning("Reviewer: API call failed, defaulting to approve")
+            return "approve"
+
+        try:
+            parsed = json.loads(raw.strip())
         except json.JSONDecodeError:
-            import re
             m = re.search(r"\{[\s\S]*\}", raw)
             if m:
                 try:

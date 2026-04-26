@@ -1,8 +1,6 @@
 # Trading Goal
+Predict Crude Oil (CL) future spikes, we are interested in price spikes >1%.
 
-For  Crude Oil (CL) and Natural Gas (NG) futures, we are interested in events where price increased or dropped by 1%.
-**Objective**: Predict these large moves before they happen.
-
-Target instruments: CL1! (Crude Oil front-month), NG1! (Natural Gas front-month)
-Prediction horizon: Next 10 minutes, next hour
+Target instruments: CL1! (Crude Oil front-month)
+Prediction horizon: Next 10 minutes: Price spike/drop > 1% in next 10 minutes. 
 Success criterion: >70% prediction accuracy on out-of-sample test set and atleast 50 trades in a year.

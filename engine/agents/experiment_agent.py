@@ -4,7 +4,6 @@ import re
 import time
 from datetime import datetime, timezone
 
-import anthropic
 import click
 from rich.console import Console
 from rich.panel import Panel
@@ -12,7 +11,7 @@ from rich.panel import Panel
 from engine.tools.quantconnect import QuantConnectClient, QuantConnectError
 from engine.tools.storage import save_experiment
 from engine.tools.agent_memory import (
-    read_memory, append_entry, ensure_header, TOOL_MEMORY_WRITE,
+    read_memory, append_entry, ensure_header,
 )
 
 AGENT_NAME = "experiment_agent"
@@ -26,12 +25,6 @@ WRITE_SYSTEM = """\
 You are an expert QuantConnect LEAN developer implementing a trading hypothesis as a Python backtest.
 
 Output ONLY the complete Python source code. No explanation, no markdown fences, no extra text.
-
-STYLE RULE — CRITICAL: Use snake_case for ALL method names, overrides, and properties.
-LEAN Python fully supports snake_case aliases. Never use PascalCase method names.
-  Wrong: SetStartDate, AddFuture, IsWarmingUp, OnData, Initialize, Securities, IsReady
-  Right: set_start_date, add_future, is_warming_up, on_data, initialize, securities, is_ready
-Enums and constants keep their casing: Resolution.Daily, Futures.Energy.CrudeOilWTI
 
 Algorithm requirements:
 - Class inherits from QCAlgorithm with initialize() and on_data() methods.
@@ -132,15 +125,14 @@ Output the complete fixed Python code.
 class ExperimentAgent:
     def __init__(
         self,
-        client: anthropic.Anthropic,
+        client,
         qc: QuantConnectClient,
         config: dict,
         pause_on_error: bool = False,
     ):
-        self.client = client
+        self.client = client  # AnthropicLLMClient or OpenAILLMClient
         self.qc = qc
         engine = config.get("engine", {})
-        self.model = engine.get("model", "claude-haiku-4-5")
         self.max_fix_attempts = int(engine.get("max_fix_attempts", 3))
         self.backtest_start = engine.get("backtest_start_date", "2021-01-01").replace("-", ",").lstrip("0")
         self.backtest_end = engine.get("backtest_end_date", "2024-06-30").replace("-", ",").lstrip("0")
@@ -242,7 +234,7 @@ class ExperimentAgent:
                 pid = self.qc.create_project(project_name)
                 logger.info("Created QC project %d (%s) for %s", pid, project_name, exp_id)
                 return pid
-            except QuantConnectError as e:
+            except QuantConnectError:
                 if attempt == 2:
                     raise
                 time.sleep(2)
@@ -309,7 +301,7 @@ class ExperimentAgent:
         save_experiment(exp_id, data)
         logger.info("Experiment %s saved.", exp_id)
 
-    # ── LLM calls (focused, single-purpose) ─────────────────────────────────
+    # ── LLM calls ────────────────────────────────────────────────────────────
 
     def _generate_code(self, hypothesis: dict, exp_id: str, memory: str) -> str:
         user_msg = WRITE_USER.format(
@@ -332,7 +324,7 @@ class ExperimentAgent:
                 " (authoritative — use ONLY these exact method names) ==\n"
                 + self.qc_python_spec
             )
-        response = self._api_call(system=system, user=user_msg, max_tokens=8192)
+        response = self.client.complete(system=system, user=user_msg, max_tokens=8192)
         code = self._extract_code(response)
         logger.debug("Generated code (%d chars)", len(code))
         return code
@@ -346,7 +338,6 @@ class ExperimentAgent:
         max_attempts: int,
         memory: str,
     ) -> str:
-        # HTML-decode common QC entities before sending to LLM
         for ent, ch in [("&#039;", "'"), ("&gt;", ">"), ("&lt;", "<"), ("&amp;", "&")]:
             error_text = error_text.replace(ent, ch)
 
@@ -360,10 +351,9 @@ class ExperimentAgent:
             error=error_text,
             code=code,
         )
-        response = self._api_call(system=FIX_SYSTEM, user=user_msg, max_tokens=8192)
+        response = self.client.complete(system=FIX_SYSTEM, user=user_msg, max_tokens=8192)
         fixed = self._extract_code(response)
 
-        # Write a memory entry for this fix
         append_entry(
             AGENT_NAME,
             f"{error_type} fix (attempt {attempt})",
@@ -372,25 +362,6 @@ class ExperimentAgent:
         console.print(f"  [dim cyan]Memory saved:[/dim cyan] {error_type} fix (attempt {attempt})")
         logger.debug("Fixed code (%d chars)", len(fixed))
         return fixed
-
-    def _api_call(self, system: str, user: str, max_tokens: int = 4096) -> str:
-        for attempt in range(5):
-            try:
-                response = self.client.messages.create(
-                    model=self.model,
-                    max_tokens=max_tokens,
-                    system=system,
-                    messages=[{"role": "user", "content": user}],
-                )
-                for block in response.content:
-                    if hasattr(block, "text"):
-                        return block.text
-                return ""
-            except anthropic.RateLimitError:
-                wait = 60 * (attempt + 1)
-                console.print(f"[yellow]Rate limit — waiting {wait}s...[/yellow]")
-                time.sleep(wait)
-        return ""
 
     # ── Display helpers ──────────────────────────────────────────────────────
 
@@ -418,10 +389,8 @@ class ExperimentAgent:
 
     def _extract_code(self, raw: str) -> str:
         raw = raw.strip()
-        # Strip markdown code fences if present
         fenced = re.sub(r"^```(?:python)?\s*\n?", "", raw, flags=re.IGNORECASE)
         fenced = re.sub(r"\n?```\s*$", "", fenced).strip()
-        # If it starts with 'from' or 'import', it's likely raw code
         if fenced.startswith(("from ", "import ", "class ")):
             return fenced
         return fenced or raw
@@ -456,13 +425,10 @@ class ExperimentAgent:
             "accuracy_pct": None,
         }
 
-        # 1. runtimeStatistics (via self.SetRuntimeStatistic)
         if "accuracy_pct" in rt_stats:
             result["accuracy_pct"] = self._parse_float(rt_stats["accuracy_pct"])
-        # 2. log line extraction
         if result["accuracy_pct"] is None:
             result["accuracy_pct"] = self._extract_accuracy(log_lines)
-        # 3. scan runtimeStatistics JSON
         if result["accuracy_pct"] is None:
             result["accuracy_pct"] = self._extract_accuracy(json.dumps(rt_stats))
 

@@ -6,10 +6,8 @@
 
 ### QuantConnect setup
 - Quant connect is a back testing engine, it sends data simulating the real timeline, this avoids algorithm from accessing future data and look ahead bias. 
-- If algorithm want to keep track of 
 - For front-month rolling use `DataNormalizationMode.BackwardsPanamaCanal`.
 - Resolution options: Minute, Hour, Daily.
-- Refer to https://www.quantconnect.com/docs/v2/writing-algorithms documentation for specs on how to write algorithm.
 
 
 ### Seasonality

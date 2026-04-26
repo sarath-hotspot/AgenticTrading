@@ -46,7 +46,7 @@ class QuantConnectClient:
             raise QuantConnectError(f"Non-JSON response ({response.status_code}): {response.text[:200]}")
         if not result.get("success", True):
             errors = result.get("errors", [result])
-            raise QuantConnectError(f"QC API error on {endpoint}: {errors}")
+            raise QuantConnectError(f"QC API error on {endpoint} (HTTP {response.status_code}): {errors}")
         return result
 
     def authenticate(self) -> bool:

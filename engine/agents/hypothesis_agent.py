@@ -1,9 +1,7 @@
 import json
 import logging
 import re
-import time
 
-import anthropic
 from rich.console import Console
 
 from engine.tools.storage import TOOL_STORAGE_READ, get_past_results_summary
@@ -74,11 +72,10 @@ console = Console()
 
 
 class HypothesisAgent:
-    def __init__(self, client: anthropic.Anthropic, config_context: str, engine_config: dict | None = None):
+    def __init__(self, client, config_context: str, engine_config: dict | None = None):
         engine = engine_config or {}
-        self.client = client
+        self.client = client  # AnthropicLLMClient or OpenAILLMClient
         self.config_context = config_context
-        self.model = engine.get("model", "claude-haiku-4-5")
         self.system_prompt = SYSTEM_PROMPT_TEMPLATE.format(
             min_signals=engine.get("min_signals_per_year", 15),
             max_conditions=engine.get("max_signal_conditions", 2),
@@ -97,49 +94,8 @@ class HypothesisAgent:
             past_results=past_results_summary,
         )
         messages = [{"role": "user", "content": user_msg}]
-        raw = self._run_tool_loop(messages, system)
+        raw = self.client.tool_loop(messages, system, self.tools, self._dispatch)
         return self._parse_hypothesis(raw)
-
-    def _api_create(self, **kwargs):
-        for attempt in range(5):
-            try:
-                return self.client.messages.create(**kwargs)
-            except anthropic.RateLimitError:
-                wait = 60 * (attempt + 1)
-                console.print(f"[yellow]Rate limit hit - waiting {wait}s...[/yellow]")
-                time.sleep(wait)
-        return self.client.messages.create(**kwargs)
-
-    def _run_tool_loop(self, messages: list, system: str = "") -> str:
-        while True:
-            response = self._api_create(
-                model=self.model,
-                max_tokens=4096,
-                system=system,
-                tools=self.tools,
-                messages=messages,
-            )
-            messages.append({"role": "assistant", "content": response.content})
-
-            if response.stop_reason != "tool_use":
-                for block in response.content:
-                    if hasattr(block, "text"):
-                        return block.text
-                return ""
-
-            tool_results = []
-            for block in response.content:
-                if block.type == "tool_use":
-                    console.print(f"[dim]  -> {block.name}[/dim]")
-                    logger.debug("Tool call: %s  args=%s", block.name, str(block.input)[:200])
-                    result = self._dispatch(block.name, block.input)
-                    logger.debug("Tool result: %s  -> %s", block.name, str(result)[:200])
-                    tool_results.append({
-                        "type": "tool_result",
-                        "tool_use_id": block.id,
-                        "content": str(result),
-                    })
-            messages.append({"role": "user", "content": tool_results})
 
     def _dispatch(self, name: str, args: dict) -> str:
         if name == "web_search":
@@ -159,19 +115,16 @@ class HypothesisAgent:
 
     def _parse_hypothesis(self, raw: str) -> dict:
         raw = raw.strip()
-        # Try direct parse first
         try:
             return json.loads(raw)
         except json.JSONDecodeError:
             pass
-        # Strip markdown fences
         fenced = re.sub(r"^```(?:json)?\s*", "", raw, flags=re.MULTILINE)
         fenced = re.sub(r"```\s*$", "", fenced, flags=re.MULTILINE).strip()
         try:
             return json.loads(fenced)
         except json.JSONDecodeError:
             pass
-        # Extract first {...} block from prose
         match = re.search(r"\{[\s\S]*\}", fenced)
         if match:
             try:

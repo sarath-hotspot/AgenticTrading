@@ -4,71 +4,20 @@ Instructions for the experiment agent when writing and fixing QC Python algorith
 Edit this file to add your own patterns, gotchas, and preferred coding style.
 
 ---
+## High level algorithm structure 
 
-## Project Setup
 
-```python
 from AlgorithmImports import *
-from datetime import timedelta
 
-class MyAlgorithm(QCAlgorithm):
+class <AlgoName>(QCAlgorithm):
     def initialize(self):
-        self.set_start_date(2021, 1, 1)
-        self.set_end_date(2024, 6, 30)
-        self.set_cash(100000)
+        // start date and end date 
+        // set cash
+        // Add instruments 
+        // Indicator initialization
+        // Other initialization. 
 
-        # Futures — always use the returned symbol, not the constant
-        # Add futures here
-
-        # Attach indicators to the continuous symbol
-        # Add indicators. 
-
-        self.set_warm_up(20)
-
-        # Train/test split
-        total_days = (self.end_date - self.start_date).days
-        self.train_end = self.start_date + timedelta(days=int(total_days * 0.7))
-        self.predictions = []
-```
-
-## OnData Pattern
-
-```python
-def on_data(self, data):
-    if self.is_warming_up:
-        return
-    if not self.rsi.is_ready:
-        return
-    # Always guard — data[sym] can be None
-    if self.cl_sym not in data or data[self.cl_sym] is None:
-        return
-    price = self.securities[self.cl_sym].price
-    if price == 0:
-        return
-    # Only record signals in out-of-sample period
-    if self.time < self.train_end:
-        return
-    # Signal logic here
-```
-
-## Accuracy Reporting (required)
-
-```python
-def on_end_of_algorithm(self):
-    correct = 0
-    for pred in self.predictions:
-        # Check if price moved >=1% in predicted direction within 60 bars
-        # Use pred["price"] as baseline; pred["direction"] = 1 (long) or -1 (short)
-        pass  # implement evaluation logic
-
-    total = len(self.predictions)
-    accuracy_pct = (correct / total * 100) if total > 0 else 0.0
-
-    # REQUIRED — both lines
-    self.set_runtime_statistic("accuracy_pct", str(round(accuracy_pct, 2)))
-    self.set_runtime_statistic("total_predictions", str(total))
-    self.log(f'{{"metric": "out_of_sample_accuracy", "accuracy_pct": {accuracy_pct}, "total_predictions": {total}}}')
-```
+    
 
 ## Common Errors and Fixes
 

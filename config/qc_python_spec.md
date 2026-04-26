@@ -10,7 +10,6 @@
 - All QCAlgorithm helper methods are called as `self.<method>(...)`.
 - Indicators created via helper methods **auto-update** with live data; indicators created via constructors must be manually `update()`d.
 - Always check `indicator.is_ready` before using `.current.value`.
-- Most indicator helpers accept an optional `resolution` parameter (e.g., `Resolution.DAILY`) to control consolidation.
 
 ---
 

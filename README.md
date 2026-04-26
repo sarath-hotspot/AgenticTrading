@@ -74,7 +74,7 @@ There are four important parts in this Agentic research loop.
 ### 1. Clone and create a virtual environment
 
 ```bash
-git clone <repo-url>
+git clone https://github.com/sarath-hotspot/AgenticTrading
 cd AgenticTrading
 python -m venv .venv
 

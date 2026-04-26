@@ -11,3 +11,6 @@ logs/
 .DS_Store
 .engine_sdk_state.json
 .engine_run_state.json
+.claude/
+.vscode/
+=*
